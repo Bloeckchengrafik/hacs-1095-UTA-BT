@@ -43,6 +43,7 @@ class Peripheral:
         self.commands = []
         self.private = ec.generate_private_key(ec.SECP256R1())
         self.is_connected = False
+        self.report_preset = True
         self.eco, self.temperature = False, 21.0
         Peripheral.instances.append(self)
 
@@ -110,9 +111,10 @@ class Peripheral:
                 self.report(bytes.fromhex("11003ce002016467032080") + value)
             elif index == 5:
                 self.eco = bool(value[0])
-                self.report(
-                    bytes.fromhex("11003ce002018ffd022080") + bytes([100 if self.eco else 97])
-                )
+                if self.report_preset:
+                    self.report(
+                        bytes.fromhex("11003ce002018ffd022080") + bytes([100 if self.eco else 97])
+                    )
             return
         opcode = packet[0]
         if opcode == 0x19:

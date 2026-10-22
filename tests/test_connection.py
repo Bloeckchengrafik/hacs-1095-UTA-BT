@@ -39,7 +39,8 @@ async def test_no_connectable_proxy(hass):
             await device._connection_factory()
 
 
-async def test_reconnect_does_not_replay_command(hass):
+@pytest.mark.parametrize("command, value", [("temperature", 21.5), ("eco", True)])
+async def test_reconnect_does_not_replay_command(hass, command, value):
     from homeassistant.exceptions import HomeAssistantError
 
     entry = MockConfigEntry(
@@ -49,11 +50,18 @@ async def test_reconnect_does_not_replay_command(hass):
     )
     coordinator = ThermostatCoordinator(hass, entry)
     coordinator.device = AsyncMock()
-    coordinator.device.set_temperature.side_effect = TimeoutError
+    method = (
+        coordinator.device.set_temperature
+        if command == "temperature"
+        else coordinator.device.set_eco
+    )
+    method.side_effect = TimeoutError
+    coordinator.data = {"eco": False}
     coordinator.connected = True
     with pytest.raises(HomeAssistantError):
-        await coordinator.async_command("temperature", 21.5)
-    coordinator.device.set_temperature.assert_awaited_once_with(21.5)
+        await coordinator.async_command(command, value)
+    method.assert_awaited_once_with(value)
+    assert coordinator.data == {"eco": False}
     assert not coordinator.connected
     assert coordinator._reconnect.is_set()
 

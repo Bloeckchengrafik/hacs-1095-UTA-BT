@@ -129,6 +129,11 @@ class ThermostatCoordinator(DataUpdateCoordinator):
                 await device.set_temperature(value)
             elif command == "eco":
                 await device.set_eco(value)
+                # Some firmware does not emit a mode report after these writes.
+                # Both application replies have succeeded at this point; publish
+                # the accepted preset so HA can select the opposite one again.
+                # Unsolicited device reports still replace this value normally.
+                self.async_set_updated_data({**self.data, "eco": bool(value)})
             else:
                 raise ValueError("Unsupported thermostat command")
         except (BleakError, ProtocolError, TimeoutError, OSError) as exc:

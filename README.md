@@ -52,10 +52,11 @@ Under the integration's options, adjust the displayed target-temperature range t
 ## State and command behavior
 
 - Room temperature is reported periodically through the authenticated connection.
-- Setpoint and Eco status are updated from actual thermostat reports. They may initially be unknown after setup/reconnect until the thermostat reports them or a control changes.
+- Setpoint and Eco status are updated from thermostat reports. They may initially be unknown after setup/reconnect until the thermostat reports them or a control changes.
+- A preset selection also updates after both mode writes receive successful application replies, including firmware that does not send a separate mode report. Later device reports remain authoritative.
 - The UI displays the **effective reported setpoint**. In Eco mode, that can differ from the normal comfort target.
 - A target-temperature command preserves the existing mode. Select **Comfort** separately if you also want to leave Eco.
-- State is not guessed from a sent command or restored from a previous session.
+- Presets are never updated merely because a command was sent: both application replies must succeed. State is not restored from a previous session.
 - Connection failures mark the entity unavailable. The integration reconnects with exponential backoff, up to 60 seconds between attempts.
 - A failed or timed-out command is **not automatically replayed**: it may already have been applied. Wait for reconnection and inspect reported state before repeating it.
 
@@ -65,7 +66,7 @@ Under the integration's options, adjust the displayed target-temperature range t
 
 **Authentication failed:** use the export/password from this thermostat's current installation. If the credential changes, use Home Assistant's reauthentication flow. To correct a credential during initial setup, cancel the flow and start again.
 
-**Unknown target/preset immediately after reconnect:** those fields are only filled from reports, not assumed defaults. Change the setting on the thermostat or through HA to obtain a fresh report. There is no unvalidated startup query or setting write.
+**Unknown target/preset immediately after reconnect:** those fields have no assumed defaults. Temperature needs a report; a preset can also be filled by an acknowledged HA preset command. Change the setting on the thermostat or through HA to obtain a fresh report. There is no unvalidated startup query or setting write.
 
 Enable debug logs for `custom_components.busch_jaeger_1095_bt` when investigating connection recovery. Diagnostics redact the ACS secret and Bluetooth address. Never attach your installation export, password, or secret to an issue.
 
