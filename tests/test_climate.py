@@ -66,6 +66,10 @@ async def test_climate_services_and_unload(hass, report_preset):
             await hass.async_block_till_done()
             assert hass.states.get(entity_id).attributes["preset_mode"] == preset
             assert Peripheral.instances[-1].eco == (preset == "eco")
+            assert hass.states.get(entity_id).attributes["temperature"] == (
+                18.0 if preset == "eco" else 21.5
+            )
+        assert Peripheral.instances[-1].reads == [2, 2, 2, 2]
         # Local/app changes reported later remain authoritative.
         for status, preset in ((100, "eco"), (97, "comfort")):
             Peripheral.instances[-1].report(

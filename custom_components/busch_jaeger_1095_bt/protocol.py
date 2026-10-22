@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives import cmac
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-VERSION = 9
+VERSION = 10
 DATA_IN_UUID = "09c9be03-7b3f-4164-bc97-9c59517440e0"
 CONTROL_UUID = "09c9be02-7b3f-4164-bc97-9c59517440e0"
 STATUS_UUID = "09c9be01-7b3f-4164-bc97-9c59517440e0"
@@ -66,6 +66,17 @@ def input_write(index, value, destination=0x0201):
     return bytes.fromhex("11000400fff0") + struct.pack(">HB", destination, len(apdu) - 1) + apdu
 
 
+def setpoint_read(destination=0x0201):
+    """APK getDataPointValue(channel=1, output index=2, isInput=false).
+
+    TelegramFactory::getDataPointValue (0x509e22c) selects property DF,
+    service 01, then appends the one-based channel and output index.
+    Output 2 is the effective setpoint for the supported function CF mapping.
+    """
+    apdu = bytes.fromhex("02c700df000103000102")
+    return bytes.fromhex("11000400fff0") + struct.pack(">HB", destination, len(apdu) - 1) + apdu
+
+
 def knx_float(data):
     raw = int.from_bytes(data, "big")
     mantissa = raw & 0x7FF
@@ -101,6 +112,7 @@ def function_reply(plaintext):
         "channel": int.from_bytes(frame[16:18], "big"),
         "datapoint_index": frame[18],
         "frame": frame.hex(),
+        "value": frame[19:].hex(),
     }
 
 
@@ -142,6 +154,10 @@ def state_reports(plaintext):
 
 class ProtocolError(RuntimeError):
     pass
+
+
+class ReadbackError(ProtocolError):
+    """The device replied to a read but did not provide a usable setpoint."""
 
 
 class AuthenticationError(ProtocolError):
@@ -358,14 +374,13 @@ class Thermostat:
         if reply:
             self._emit("application_reply", **reply)
             if self._pending:
-                index, future = self._pending
+                key, future = self._pending
                 if (
-                    reply["property"] == "0xda"
-                    and reply["service"] == "0x81"
-                    and reply["channel"] == 1
-                    and reply["datapoint_index"] == index
-                    and not future.done()
-                ):
+                    reply["property"],
+                    reply["service"],
+                    reply["channel"],
+                    reply["datapoint_index"],
+                ) == key and not future.done():
                     future.set_result(reply)
         for report in state_reports(normalized):
             self.state[report["name"]] = report["value"]
@@ -401,23 +416,27 @@ class Thermostat:
             if self._pending and not self._pending[1].done():
                 self._pending[1].set_exception(exc)
 
-    async def _write_input(self, index, value):
+    async def _request(self, frame, index, property_id, service, *, reject_errors=True):
         if not self._reader or self._failure:
             raise ProtocolError(f"Connection is not usable: {self._failure}")
         future = asyncio.get_running_loop().create_future()
-        self._pending = (index, future)
-        frame = input_write(index, value, self.destination)
+        self._pending = ((property_id, service, 1, index), future)
         # The APK clears the inner offset AND sequence after a complete telegram
         # (sendNextFragment, 0x7776040). Every small new telegram starts with 03.
         plaintext = bytes.fromhex("03020000") + frame
         counter = self._tx_counter
         self._tx_counter += 1  # Never reuse a nonce, including after failed sends.
         packet = encrypt_packet(plaintext, self._shared, self._iv_suffix, counter)
-        self._emit("command", index=index, counter=counter, frame=frame.hex())
+        self._emit(
+            "command" if service == "0x81" else "read",
+            index=index,
+            counter=counter,
+            frame=frame.hex(),
+        )
         try:
             await self._send(packet, DATA_IN_UUID)
             reply = await asyncio.wait_for(future, 5)
-            if reply["result_code"] & 128:
+            if reject_errors and reply["result_code"] & 128:
                 raise ProtocolError(f"Thermostat rejected input {index}: {reply['result_name']}")
             # Positive status 2 accompanied the hardware-verified setpoint write.
             return reply
@@ -432,6 +451,27 @@ class Thermostat:
             if not future.done():
                 future.cancel()
             self._pending = None
+
+    async def _write_input(self, index, value):
+        return await self._request(
+            input_write(index, value, self.destination), index, "0xda", "0x81"
+        )
+
+    async def read_setpoint(self):
+        """Read the actual effective target without writing temperature or mode."""
+        async with self._lock:
+            reply = await self._request(
+                setpoint_read(self.destination), 2, "0xdf", "0x01", reject_errors=False
+            )
+            if reply["result_code"] & 128:
+                raise ReadbackError(f"Setpoint read rejected: {reply['result_name']}")
+            value = bytes.fromhex(reply["value"])
+            if len(value) != 2:
+                raise ReadbackError("Setpoint read returned an invalid temperature payload")
+            temperature = round(knx_float(value), 3)
+            self.state["setpoint"] = temperature
+            self._emit("state", name="setpoint", value=temperature, source="readback")
+            return temperature
 
     async def set_temperature(self, celsius):
         """Set absolute Celsius temperature; hardware accepts 21 and 21.5.

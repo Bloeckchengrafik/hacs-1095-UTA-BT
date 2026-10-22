@@ -16,5 +16,5 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         ),
         "connected": coordinator.connected,
         "state": dict(coordinator.data),
-        "protocol_revision": 9,
+        "protocol_revision": 10,
     }

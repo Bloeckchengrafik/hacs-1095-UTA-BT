@@ -9,7 +9,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.busch_jaeger_1095_bt.connection import create_thermostat
 from custom_components.busch_jaeger_1095_bt.const import CONF_SECRET, DOMAIN
 from custom_components.busch_jaeger_1095_bt.coordinator import ThermostatCoordinator
-from custom_components.busch_jaeger_1095_bt.protocol import AuthenticationError, ProtocolError
+from custom_components.busch_jaeger_1095_bt.protocol import (
+    AuthenticationError,
+    ProtocolError,
+    ReadbackError,
+)
 
 
 async def test_proxy_device_lookup(hass):
@@ -134,3 +138,47 @@ async def test_reconnect_uses_fresh_session_and_clears_stale_state(hass):
         finally:
             await coordinator.async_stop()
     second.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "error, reconnect", [(ReadbackError("unsupported"), False), (TimeoutError(), True)]
+)
+async def test_readback_failure_preserves_accepted_preset_without_replay(hass, error, reconnect):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="AA:BB:CC:DD:EE:FF",
+        data={CONF_ADDRESS: "AA:BB:CC:DD:EE:FF", CONF_SECRET: "ab" * 32},
+    )
+    coordinator = ThermostatCoordinator(hass, entry)
+    coordinator.device = AsyncMock()
+    coordinator.device.read_setpoint.side_effect = error
+    coordinator.connected = True
+    coordinator.data = {"eco": False, "setpoint": 21.5, "measured_temperature": 20.0}
+    await coordinator.async_command("eco", True)
+    coordinator.device.set_eco.assert_awaited_once_with(True)
+    coordinator.device.set_temperature.assert_not_awaited()
+    coordinator.device.read_setpoint.assert_awaited_once()
+    assert coordinator.data == {"eco": True, "measured_temperature": 20.0}
+    assert coordinator.connected is not reconnect
+    assert coordinator._reconnect.is_set() is reconnect
+
+
+async def test_preset_refresh_preserves_report_received_during_mode_writes(hass):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="AA:BB:CC:DD:EE:FF",
+        data={CONF_ADDRESS: "AA:BB:CC:DD:EE:FF", CONF_SECRET: "ab" * 32},
+    )
+    coordinator = ThermostatCoordinator(hass, entry)
+    coordinator.device = AsyncMock()
+    coordinator.connected = True
+    coordinator.data = {"eco": False, "setpoint": 21.5}
+
+    async def set_eco(enabled):
+        coordinator._on_event({"kind": "state", "name": "setpoint", "value": 18.5})
+
+    coordinator.device.set_eco.side_effect = set_eco
+    coordinator.device.read_setpoint.side_effect = ReadbackError("unsupported")
+    await coordinator.async_command("eco", True)
+    assert coordinator.data == {"eco": True, "setpoint": 18.5}
+    assert coordinator.connected

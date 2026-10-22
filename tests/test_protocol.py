@@ -10,6 +10,11 @@ from custom_components.busch_jaeger_1095_bt import protocol as bt
 TEST_SECRET = bytes(range(32))
 
 
+def bt_encode(value):
+    # These synthetic device targets need only exponent 1.
+    return struct.pack(">H", 0x0800 | round(value * 50))
+
+
 class Characteristic:
     def __init__(self, uuid, properties):
         self.uuid, self.properties = uuid, properties
@@ -41,6 +46,9 @@ class Peripheral:
         self.sequence, self.last_client_sequence, self.counter = 0, -1, -1
         self.rx_counter = 2**63 - 1
         self.commands = []
+        self.reads = []
+        self.read_result = 2
+        self.read_value = None
         self.private = ec.generate_private_key(ec.SECP256R1())
         self.is_connected = False
         self.report_preset = True
@@ -100,6 +108,24 @@ class Peripheral:
             )
             frame = plaintext[4:]
             assert frame[8] == len(frame) - 10 and frame[15] == len(frame) - 16
+            if frame[9:15] == bytes.fromhex("02c700df0001"):
+                assert frame.hex() == "11000400fff002010902c700df000103000102"
+                self.reads.append(2)
+                # A distinct effective Eco target, without a group-value report.
+                value = self.read_value
+                if value is None:
+                    value = bytes.fromhex("0708") if self.eco else bt_encode(self.temperature)
+                reply = (
+                    bytes.fromhex("110004600201fff0")
+                    + bytes([9 + len(value)])
+                    + bytes.fromhex("02c900df")
+                    + bytes([self.read_result, 1, 3 + len(value), 0, 1, 2])
+                    + value
+                )
+                # A write reply with the same index cannot satisfy the read.
+                self.report(bytes.fromhex("110004600201fff00902c900da028103000102"))
+                self.report(reply)
+                return
             assert frame[9:15] == bytes.fromhex("02c700da0081")
             assert frame[16:18] == bytes.fromhex("0001")
             index, value = frame[18], frame[19:]
@@ -228,3 +254,29 @@ def test_recorded_packets():
         ]
         is True
     )
+
+
+async def test_setpoint_readback_and_rejected_read_does_not_break_writes():
+    import pytest
+
+    async def connector():
+        peripheral = Peripheral()
+        await peripheral.connect()
+        return peripheral
+
+    async with bt.Thermostat("test", TEST_SECRET, connection_factory=connector) as device:
+        peripheral = Peripheral.instances[-1]
+        await device.set_eco(True)
+        assert await device.read_setpoint() == 18.0
+        await device.set_eco(False)
+        assert await device.read_setpoint() == 21.0
+        peripheral.read_result = 128
+        with pytest.raises(bt.ReadbackError, match="rejected"):
+            await device.read_setpoint()
+        peripheral.read_result = 2
+        peripheral.read_value = b""
+        with pytest.raises(bt.ReadbackError, match="payload"):
+            await device.read_setpoint()
+        # Rejected/malformed responses never poison the authenticated session.
+        await device.set_temperature(21.5)
+        assert peripheral.commands[-1] == (8, bytes.fromhex("0c33"))

@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .connection import create_thermostat
 from .const import CONF_DESTINATION, CONF_SECRET, DEFAULT_DESTINATION, DOMAIN
-from .protocol import AuthenticationError, ProtocolError, Thermostat
+from .protocol import AuthenticationError, ProtocolError, ReadbackError, Thermostat
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,12 +33,15 @@ class ThermostatCoordinator(DataUpdateCoordinator):
         self._task: asyncio.Task | None = None
         self._reconnect = asyncio.Event()
         self._last_state_at = 0.0
+        self._setpoint_revision = 0
         self.data = {}
 
     @callback
     def _on_event(self, event: dict) -> None:
         kind = event["kind"]
         if kind == "state":
+            if event["name"] == "setpoint":
+                self._setpoint_revision += 1
             self._last_state_at = time.monotonic()
             self.async_set_updated_data({**self.data, event["name"]: event["value"]})
         elif kind == "receive_error":
@@ -124,6 +127,7 @@ class ThermostatCoordinator(DataUpdateCoordinator):
         device = self.device
         if device is None or not self.connected:
             raise HomeAssistantError("Thermostat is disconnected; wait for Bluetooth reconnection")
+        setpoint_revision = self._setpoint_revision
         try:
             if command == "temperature":
                 await device.set_temperature(value)
@@ -133,7 +137,12 @@ class ThermostatCoordinator(DataUpdateCoordinator):
                 # Both application replies have succeeded at this point; publish
                 # the accepted preset so HA can select the opposite one again.
                 # Unsolicited device reports still replace this value normally.
-                self.async_set_updated_data({**self.data, "eco": bool(value)})
+                data = {**self.data, "eco": bool(value)}
+                # Preserve reports received during the writes; otherwise the
+                # old mode's effective target is stale until refreshed.
+                if self._setpoint_revision == setpoint_revision:
+                    data.pop("setpoint", None)
+                self.async_set_updated_data(data)
             else:
                 raise ValueError("Unsupported thermostat command")
         except (BleakError, ProtocolError, TimeoutError, OSError) as exc:
@@ -144,3 +153,19 @@ class ThermostatCoordinator(DataUpdateCoordinator):
             raise HomeAssistantError(
                 "Command could not be confirmed; reconnecting without replaying it"
             ) from exc
+
+        if command == "eco":
+            # Allow the controller's control cycle to apply the accepted mode.
+            await asyncio.sleep(0.3)
+            try:
+                await device.read_setpoint()
+            except ReadbackError as exc:
+                # Unsupported reads must not undo or repeat an accepted preset.
+                _LOGGER.warning("Preset accepted, but effective setpoint read failed: %s", exc)
+            except (BleakError, ProtocolError, TimeoutError, OSError):
+                self.connected = False
+                self.async_set_update_error(UpdateFailed("Setpoint refresh connection failed"))
+                self._reconnect.set()
+                _LOGGER.warning(
+                    "Preset accepted, but setpoint refresh lost the connection; reconnecting"
+                )

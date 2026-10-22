@@ -54,7 +54,8 @@ Under the integration's options, adjust the displayed target-temperature range t
 - Room temperature is reported periodically through the authenticated connection.
 - Setpoint and Eco status are updated from thermostat reports. They may initially be unknown after setup/reconnect until the thermostat reports them or a control changes.
 - A preset selection also updates after both mode writes receive successful application replies, including firmware that does not send a separate mode report. Later device reports remain authoritative.
-- The UI displays the **effective reported setpoint**. In Eco mode, that can differ from the normal comfort target.
+- The UI displays the **effective reported setpoint**. In Eco mode, that can differ from the normal comfort target. After a preset command succeeds, the integration reads that effective target from output datapoint 2; it does not calculate an Eco reduction locally. The previous target is cleared while waiting for a fresh value, unless a fresh report already arrived during the mode writes.
+- If the device rejects the read or returns an invalid value, the preset remains selected and the target stays unknown until a valid report arrives, or keeps any fresh report received during the mode writes. A read timeout triggers reconnection without replaying the preset.
 - A target-temperature command preserves the existing mode. Select **Comfort** separately if you also want to leave Eco.
 - Presets are never updated merely because a command was sent: both application replies must succeed. State is not restored from a previous session.
 - Connection failures mark the entity unavailable. The integration reconnects with exponential backoff, up to 60 seconds between attempts.
@@ -81,6 +82,9 @@ The protocol was validated with temperature changes and alternating temperature/
 - UI setup, upload disposal, authentication errors, options, and reauthentication.
 - Actual HA climate service calls, entity unload, and diagnostics redaction.
 - Failed-command handling without replay.
+- Effective setpoint readback after repeated preset transitions, mismatched reply filtering, and readback failures without repeating accepted writes.
+
+The new setpoint read request was reconstructed from the APK; its actual response still needs confirmation on physical hardware. See [protocol readback notes](PROTOCOL.md).
 
 Tests run against HA **2025.1.4 / Python 3.12** and **2026.10.2 / Python 3.14**. The HA/proxy wrapper still needs an end-to-end check in your installation; passing simulated tests is not that check.
 
