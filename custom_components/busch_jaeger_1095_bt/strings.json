@@ -1,0 +1,68 @@
+{
+  "title": "Busch-Jaeger 1095 UTA-BT",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect a Busch-Jaeger thermostat",
+        "description": "Enter the Bluetooth address of your 1095 UTA-BT. A nearby ESPHome Bluetooth proxy can provide the connection.",
+        "data": {
+          "address": "Bluetooth address",
+          "name": "Device name"
+        }
+      },
+      "credentials": {
+        "title": "Installation credential",
+        "menu_options": {
+          "installation": "Upload installation export and enter its password",
+          "secret": "Enter an existing 32-byte ACS secret"
+        }
+      },
+      "installation": {
+        "title": "Import installation credential",
+        "description": "Export the installation from free@home Next. The upload is deleted after processing; only the derived secret is saved.",
+        "data": {
+          "installation_file": "Installation export (.gepinstallation)",
+          "password": "Installation password"
+        }
+      },
+      "secret": {
+        "title": "Enter ACS secret",
+        "description": "Use the 64 hexadecimal characters derived from your installation. The printed device PK is a different credential.",
+        "data": {
+          "acs_secret": "ACS secret"
+        }
+      },
+      "connect": {
+        "title": "Validate connection",
+        "description": "Disconnect the phone app and check the nearby Bluetooth proxy. Submit to retry. For a different credential, cancel setup and start again."
+      }
+    },
+    "error": {
+      "invalid_address": "Enter a Bluetooth address such as AA:BB:CC:DD:EE:FF.",
+      "invalid_export": "The installation export is invalid or uses an unsupported format.",
+      "invalid_secret": "Enter a 32-byte ACS secret as 64 hexadecimal characters.",
+      "invalid_auth": "Authentication failed. Check that the installation export and password match this thermostat.",
+      "cannot_connect": "Cannot connect. Check Bluetooth proxy reachability and available connection slots."
+    },
+    "abort": {
+      "already_configured": "This thermostat is already configured.",
+      "not_connectable": "An active Bluetooth adapter or proxy is required.",
+      "reauth_successful": "The installation credential was updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Temperature range",
+        "description": "Set the range offered by Home Assistant to match your installation. These settings do not change the thermostat’s own limits.",
+        "data": {
+          "min_temp": "Minimum target temperature",
+          "max_temp": "Maximum target temperature"
+        }
+      }
+    },
+    "error": {
+      "invalid_range": "The minimum temperature must be lower than the maximum."
+    }
+  }
+}

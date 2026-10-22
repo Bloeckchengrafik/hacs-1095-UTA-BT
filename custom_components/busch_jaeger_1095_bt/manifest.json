@@ -1,0 +1,24 @@
+{
+  "domain": "busch_jaeger_1095_bt",
+  "name": "Busch-Jaeger 1095 UTA-BT",
+  "bluetooth": [
+    {
+      "service_uuid": "0000fdc9-0000-1000-8000-00805f9b34fb",
+      "connectable": true
+    }
+  ],
+  "codeowners": [
+    "@Bloeckchengrafik"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "bluetooth_adapters",
+    "file_upload"
+  ],
+  "documentation": "https://github.com/Bloeckchengrafik/hacs-1095-UTA-BT",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/Bloeckchengrafik/hacs-1095-UTA-BT/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
